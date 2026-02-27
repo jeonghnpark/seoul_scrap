@@ -1,0 +1,93 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>서울시 열린데이터 광장 OpenAPI 샘플</title>
+</head>
+<body>
+<script language="javascript">
+// 엔터키 함수입니다.
+function fnEnter() {
+	if(event.keyCode == 13) {
+		fnSearch();
+	}
+}
+
+// 조회 함수입니다.
+function fnSearch() {
+	// XML 통신을 하기 위해 변수를 선언합니다.
+	var xhr = new XMLHttpRequest();
+	
+	// 서비스별 추가 요청 인자이며 자세한 내용은 각 서비스별 api탭 - '요청인자'부분에 자세히 나와 있습니다.
+	// 요청 인자가 여러개일 경우, 필수 여부를 확인해 필수인 값은 무조건 넣어서 조회해야 합니다.
+	// 필수가 아닐 경우, 그리고 공백으로 처리해야할 경우 공백 대신 %20을 붙여 조회하시면 됩니다.
+	// ex) http://openapi.seoul.go.kr:8088/sample/xml/SeoulAdminMesure/1/5/%20/%20/%20/%20/향진
+	var searchValueTxt = document.getElementById("searchValue").value;
+	
+	// 검색조건이 공백일 경우 예외처리입니다.
+	if(searchValueTxt == null || searchValueTxt == "") {
+		alert("지역명을 입력하세요.");
+		return null;
+	}
+	
+	// 인증키 및 검색할 url 입니다.
+	//var certKey = "sample";
+	//var url_original = "http://openapi.seoul.go.kr:8088/" + certKey + "/xml/RealtimeCityAir/1/5/%20/" + searchValueTxt; 
+	var certKey = "열린데이터광장에서 발급받은 개인암호키 넣으세요";
+	var url_original = "http://openapi.seoul.go.kr:8088/" + certKey + "/xml/RealtimeCityAir/1/1000/%20/" + searchValueTxt; 
+	
+	// 준비상태가 되었을 때 입니다.
+	xhr.onreadystatechange = function () {
+		if (this.readyState == xhr.DONE) {  // <== 정상적으로 준비되었을때 입니다.
+			if(xhr.status == 200||xhr.status == 201){ // <== 호출 상태가 정상적일때 입니다.
+				// XML 데이터를 파싱하기 위해 변수를 선언합니다.
+				var xmlParser = new DOMParser();
+				var xmlDoc = xmlParser.parseFromString(xhr.responseText,"text/xml");
+				console.log(xmlDoc);
+				// 예외처리입니다.
+				if(xmlDoc.getElementsByTagName("CODE")[0].textContent == "INFO-200") {
+					document.getElementById("resultDiv").innerHTML =  "해당하는 데이터가 없습니다.</br>다른 지역명을 입력해 주세요.";
+				} else if(xmlDoc.getElementsByTagName("list_total_count")[0].textContent != 1) {
+					document.getElementById("resultDiv").innerHTML =  "검색된 데이터가 2개 이상입니다.</br>상세한 지역명을 입력해 주세요.";
+				} else {
+					// 정상적으로 호출했을 때입니다.
+					var dateValue = xmlDoc.getElementsByTagName("MSRDT")[0].textContent.substring(0,4) + "년 " 
+									+ xmlDoc.getElementsByTagName("MSRDT")[0].textContent.substring(4,6) + "월 "
+									+ xmlDoc.getElementsByTagName("MSRDT")[0].textContent.substring(6,8) + "일 "
+									+ xmlDoc.getElementsByTagName("MSRDT")[0].textContent.substring(8,10) + "시 기준\n"; /*측정일시*/
+					var jachiguValue = "(" + xmlDoc.getElementsByTagName("MSRRGN_NM")[0].textContent
+									+ ")" + xmlDoc.getElementsByTagName("MSRSTE_NM")[0].textContent; /*권역명, 측정소명*/
+					var idexValue = xmlDoc.getElementsByTagName("IDEX_NM")[0].textContent; /*통합대기환경등급*/
+					var idexMvlValue = xmlDoc.getElementsByTagName("IDEX_MVL")[0].textContent; /*통합대기환경지수*/
+					var pm10Value = xmlDoc.getElementsByTagName("PM10")[0].textContent; /*미세먼지농도*/
+					var pm25Value = xmlDoc.getElementsByTagName("PM25")[0].textContent; /*초미세먼지농도*/
+					
+					 document.getElementById("resultDiv").innerHTML = dateValue + "<br/>" 
+					 		+ jachiguValue + "의 통합대기환경지수는 " + idexMvlValue + "로, 통합대기환경등급 " + idexValue + "입니다.<br/>"
+					 		+ "미세먼지는 " + pm10Value + "(㎍/㎥), 초미세먼지는 " + pm25Value + "(㎍/㎥)입니다.<br/>"
+					 		+ "날씨에 유의하시기 바랍니다. 감사합니다.";
+				 		
+				}
+			}
+		}
+	};
+	
+	// Http 통신을 통해 받아온 XML을 xhr 변수에 저장합니다. 
+	xhr.open("GET", url_original);
+	xhr.send('');
+}
+
+</script>
+
+	<b>조회(25개 자치구로 조회합니다.)</b>
+	<br/>
+	<input id="searchValue" value="" onkeydown="fnEnter();"/> 
+	<button onclick="fnSearch();" style="width: 45px; height: 20px; cursor: pointer;">조회</button>
+	<br/>
+	<br/>
+	<b>결과</b>
+	<br/>
+	<div id="resultDiv"></div>
+
+</body>
+</html>
