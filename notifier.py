@@ -68,7 +68,7 @@ class Notifier:
         # f-string을 사용하여 메시지 내용을 구성합니다.
         # 이모지와 줄 바꿈 문자(`\n`)를 사용하여 시각적으로 구분되고 읽기 쉽게 만듭니다.
         message = (
-            f"📢 [신규 예약 알림]\n"
+            # f"📢 [신규 예약 알림]\n"
             f"🏷️ {category} | {state}\n"
             f"📌 {title}\n"
             # f"📍 {place}\n"

@@ -20,6 +20,14 @@ class Scraper:
         "ListPublicReservationMedical"      # 진료복지 예약 정보 조회
     ]
 
+    # 각 서비스 유형별로 선택적으로 가져올 카테고리 목록을 정의합니다.
+    # 이 딕셔너리를 수정하여 원하는 카테고리만 필터링할 수 있습니다.
+    # 모든 카테고리를 가져오려면 해당 서비스 유형을 딕셔너리에서 제거하거나 빈 리스트로 설정하세요.
+    SELECTED_CATEGORIES = {
+        "ListPublicReservationCulture": ["교육체험", "문화행사", "전시/관람"], # 문화행사 서비스에서 선택
+        "ListPublicReservationEducation": ["공예/취미", "자연/과학"] # 교육강좌 서비스에서 선택
+    }
+
     def __init__(self):
         # .env 파일에서 서울시 API 키를 가져옵니다.
         # 이 키는 서울 열린데이터광장에서 발급받은 개인 인증키입니다.
@@ -62,7 +70,16 @@ class Scraper:
                     # 각 예약 정보(row)를 파싱하여 `all_reservations` 리스트에 추가합니다.
                     for row in rows:
                         reservation = self._parse_row(row, service) # 헬퍼 함수로 데이터 정제
-                        all_reservations.append(reservation)
+                        
+                        # 특정 서비스 유형에 대해 카테고리 필터링 적용
+                        if service in self.SELECTED_CATEGORIES:
+                            # 해당 서비스 유형에 대한 선택 카테고리 목록이 있고,
+                            # 현재 예약의 카테고리가 해당 목록에 포함될 경우에만 추가합니다.
+                            if reservation.get("category") in self.SELECTED_CATEGORIES[service]:
+                                all_reservations.append(reservation)
+                        else:
+                            # SELECTED_CATEGORIES에 없는 서비스 유형은 모든 카테고리를 가져옵니다.
+                            all_reservations.append(reservation)
 
             except requests.exceptions.RequestException as e:
                 # 네트워크 연결 문제, 타임아웃 등 `requests` 라이브러리 관련 예외 처리
