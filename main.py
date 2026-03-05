@@ -43,8 +43,96 @@ def job():
         # `async def`를 사용하여 비동기 작업을 정의하고, `asyncio.run`으로 실행합니다.
         async def process_reservations():
             nonlocal new_count  # 중첩 함수에서 외부 함수의 `new_count` 변수를 수정하기 위해 필요
+            
+            # 오늘 날짜를 가져옵니다.
+            today = datetime.now().strftime("%Y-%m-%d")
+            
+            # 예약 정보를 정렬합니다.
+            # 1. 접수 시작일(rcpt_bgndt)이 오늘 이후인 경우와 이전인 경우로 분리합니다.
+            # 2. 오늘 이후인 경우: 접수 시작일이 가까운 순서대로 정렬 (오름차순) -> 나중에 처리됨 (마지막 알림)
+            # 3. 오늘 이전인 경우: 접수 시작일이 먼 순서대로 정렬 (내림차순) -> 먼저 처리됨 (먼저 알림)
+            # 
+            # 하지만 텔레그램 알림은 순차적으로 전송되므로, 
+            # "가장 중요한 것(접수 임박)"을 "마지막"에 보내야 사용자가 텔레그램 방에서 가장 아래(최신 메시지)에서 볼 수 있습니다.
+            # 따라서 정렬 순서는 다음과 같아야 합니다:
+            # 처리 순서(전송 순서): [이미 지난 것들 (오래된 순 -> 최근 순)] -> [오늘 이후인 것들 (먼 미래 -> 가까운 미래)]
+            # 이렇게 하면 텔레그램에는 [오늘 이후인 것들 (가까운 미래)]가 가장 마지막에 쌓이게 됩니다.
+            
+            # 우선 예약 정보를 접수 시작일 기준으로 정렬합니다.
+            # rcpt_bgndt 형식은 'YYYY-MM-DD HH:MM:SS.S' 또는 'YYYY-MM-DD' 일 수 있으므로 문자열 비교를 사용합니다.
+            
+            # 접수 시작일이 있는 데이터만 필터링하고 정렬합니다.
+            valid_reservations = [r for r in reservations if r.get('rcpt_bgndt')]
+            
+            # 정렬 키 함수: 접수 시작일
+            # 내림차순으로 정렬하면 (미래 -> 과거) 순서가 됩니다.
+            # 이렇게 순차적으로 전송하면:
+            # 1. 가장 먼 미래의 공고 전송
+            # ...
+            # 2. 오늘/내일의 공고 전송 (가장 중요)
+            # ...
+            # 3. 이미 지난 공고 전송
+            
+            # 사용자의 요구사항:
+            # "오늘을 기준으로 접수 시작일이 가까운 순서대로 notify해줘."
+            # "오늘 이후로 접수가 시작되는 건에 대해서 보여주고, 이후에는 접수일이 이미 지난 건에 대한 순서로 받아줘."
+            # "텔레그램에 보낼때는 마찬가지로 우선순위가 높은 건을 마지막으로 notify해줘."
+            
+            # 즉, 전송 순서(처리 순서)는 다음과 같아야 합니다:
+            # 1. 우선순위가 낮은 것 (이미 지난 것, 먼 미래인 것)
+            # 2. 우선순위가 높은 것 (오늘, 내일 등 접수 임박한 것)
+            
+            # 이를 위해 데이터를 두 그룹으로 나눕니다.
+            future_reservations = [] # 오늘 포함 이후 접수 시작
+            past_reservations = []   # 오늘 이전 접수 시작
+            
+            for r in valid_reservations:
+                # 날짜 비교를 위해 문자열 앞 10자리(YYYY-MM-DD)만 사용
+                rcpt_date = r.get('rcpt_bgndt', '')[:10]
+                if rcpt_date >= today:
+                    future_reservations.append(r)
+                else:
+                    past_reservations.append(r)
+            
+            # 정렬 로직:
+            # past_reservations: 이미 지난 것들. 어떤 순서로 보낼지 명시되지 않았으나, 
+            # 보통 과거 데이터 중에서도 최근 것이 더 중요할 수 있으므로 
+            # 먼 과거 -> 최근 과거 순으로 보내면, 최근 과거가 더 아래에 쌓임.
+            # 하지만 "우선순위가 높은 건을 마지막으로"라는 원칙에 따라
+            # future_reservations가 past_reservations보다 나중에 전송되어야 함.
+            
+            # future_reservations 내부 정렬:
+            # 접수일이 가까운 것(오늘/내일)이 가장 중요하므로 가장 마지막에 전송되어야 함.
+            # 따라서 먼 미래 -> 가까운 미래 순으로 전송해야 함. (내림차순 정렬)
+            future_reservations.sort(key=lambda x: x.get('rcpt_bgndt', ''), reverse=True)
+            
+            # past_reservations 내부 정렬:
+            # 이미 지난 것들은 상대적으로 중요도가 낮음.
+            # 여기서는 접수일이 오래된 순 -> 최근 순으로 전송한다고 가정 (오름차순)
+            # 혹은 future와 맞추기 위해 내림차순(최근 과거 -> 먼 과거)으로 할 수도 있음.
+            # 사용자 예시: "공고일이 이미 가장 많이 지난 공고2를 처음으로 notify한다."
+            # 공고2(3/1) -> ... -> 공고1(3/5, 오늘)
+            # 즉, 날짜 오름차순(과거 -> 미래)으로 전송하면 됨.
+            
+            # 다시 정리:
+            # 사용자 예시: 3/1(과거) -> 3/2(과거) -> 3/3(과거) -> 3/4(과거) -> 3/7(미래) -> 3/5(오늘)
+            # 전송 순서:
+            # 1. 과거 데이터 (오래된 순 -> 최근 순) : 3/1, 3/2, 3/3, 3/4
+            # 2. 미래 데이터 (먼 미래 -> 가까운 미래) : 3/7
+            # 3. 오늘 데이터 (가장 중요) : 3/5
+            
+            # 따라서:
+            # past_reservations: 오름차순 정렬 (3/1, 3/2, 3/3, 3/4)
+            past_reservations.sort(key=lambda x: x.get('rcpt_bgndt', ''))
+            
+            # future_reservations: 내림차순 정렬 (3/7, 3/5) -> 3/7 먼저 전송, 3/5 나중에 전송
+            future_reservations.sort(key=lambda x: x.get('rcpt_bgndt', ''), reverse=True)
+            
+            # 최종 처리 순서 리스트
+            sorted_reservations = past_reservations + future_reservations
+            
             # 수집된 각 예약 정보에 대해 반복합니다.
-            for reservation in reservations:
+            for reservation in sorted_reservations:
                 svc_id = reservation["svc_id"]  # 예약 고유 ID 추출
 
                 # `storage.is_seen()`을 통해 해당 예약이 이전에 알림이 발송되었는지 확인합니다.
