@@ -44,10 +44,10 @@ class Scraper:
         if not self.api_key:
             raise ValueError("SEOUL_API_KEY is not set in .env file")
 
-    def fetch_new_reservations(self):
+    def fetch_new_reservations(self, fetch_limit=100):
         """
         서울시 공공서비스 예약 API에서 새로운 예약 정보를 가져옵니다.
-        각 서비스 유형별로 최대 100건의 최신 데이터를 조회하며,
+        각 서비스 유형별로 최대 fetch_limit 건의 최신 데이터를 조회하며,
         API 호출 중 발생할 수 있는 네트워크 오류나 데이터 파싱 오류를 처리합니다.
         """
         all_reservations = []  # 모든 서비스 유형에서 가져온 예약 정보를 저장할 리스트
@@ -57,9 +57,9 @@ class Scraper:
             try:
                 # API 요청 URL을 구성합니다.
                 # {KEY}는 발급받은 API 키, {SERVICE}는 각 서비스 유형 이름,
-                # 1/100은 시작 인덱스와 끝 인덱스로, 보통 최신 100건을 의미합니다.
+                # 1/fetch_limit은 시작 인덱스와 끝 인덱스로, 보통 최신 fetch_limit 건을 의미합니다.
                 # API 문서에 따라 이 숫자는 달라질 수 있습니다.
-                url = f"{self.BASE_URL}/{self.api_key}/json/{service}/1/30/"
+                url = f"{self.BASE_URL}/{self.api_key}/json/{service}/1/{fetch_limit}/"
                 # 구성된 URL로 서울시 API에 GET 요청을 보냅니다.
                 response = requests.get(url)
                 # HTTP 요청이 성공했는지 (상태 코드 200번대) 확인하고,

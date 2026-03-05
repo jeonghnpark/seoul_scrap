@@ -15,10 +15,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def job():
+def job(fetch_limit=500, notify_limit=30):
     """
     주기적으로 실행될 메인 작업 함수입니다. 이 함수는 서울시 공공서비스 예약 정보를 스크랩하고,
     이미 알림을 보낸 중복 예약을 필터링한 후, 새로운 예약 정보를 텔레그램으로 전송하는 일련의 과정을 담당합니다.
+    
+    Args:
+        fetch_limit (int): API에서 가져올 최대 공고 수 (기본값: 500)
+        notify_limit (int): 텔레그램으로 알림을 보낼 최대 공고 수 (기본값: 30)
     """
     logger.info("Starting job...")  # 작업 시작을 알리는 로그 메시지
     try:
@@ -32,13 +36,13 @@ def job():
 
         # 2. Scraper를 사용하여 서울시 공공서비스 예약 API로부터 최신 예약 정보를 가져옵니다.
         # 이 과정에서 네트워크 요청과 JSON 데이터 파싱이 이루어집니다.
-        reservations = scraper.fetch_new_reservations()
+        reservations = scraper.fetch_new_reservations(fetch_limit=fetch_limit)
         logger.info(
             f"Fetched {len(reservations)} reservations."
         )  # 가져온 예약 정보의 개수 로깅
 
         new_count = 0  # 새로 발견되어 알림을 보낸 예약의 개수를 세기 위한 카운터
-
+        
         # 3. 가져온 예약 정보를 비동기적으로 처리하고, 필터링하여 텔레그램 알림을 전송하는 함수입니다.
         # `async def`를 사용하여 비동기 작업을 정의하고, `asyncio.run`으로 실행합니다.
         async def process_reservations():
@@ -47,31 +51,8 @@ def job():
             # 오늘 날짜를 가져옵니다.
             today = datetime.now().strftime("%Y-%m-%d")
             
-            # 예약 정보를 정렬합니다.
-            # 1. 접수 시작일(rcpt_bgndt)이 오늘 이후인 경우와 이전인 경우로 분리합니다.
-            # 2. 오늘 이후인 경우: 접수 시작일이 가까운 순서대로 정렬 (오름차순) -> 나중에 처리됨 (마지막 알림)
-            # 3. 오늘 이전인 경우: 접수 시작일이 먼 순서대로 정렬 (내림차순) -> 먼저 처리됨 (먼저 알림)
-            # 
-            # 하지만 텔레그램 알림은 순차적으로 전송되므로, 
-            # "가장 중요한 것(접수 임박)"을 "마지막"에 보내야 사용자가 텔레그램 방에서 가장 아래(최신 메시지)에서 볼 수 있습니다.
-            # 따라서 정렬 순서는 다음과 같아야 합니다:
-            # 처리 순서(전송 순서): [이미 지난 것들 (오래된 순 -> 최근 순)] -> [오늘 이후인 것들 (먼 미래 -> 가까운 미래)]
-            # 이렇게 하면 텔레그램에는 [오늘 이후인 것들 (가까운 미래)]가 가장 마지막에 쌓이게 됩니다.
-            
-            # 우선 예약 정보를 접수 시작일 기준으로 정렬합니다.
-            # rcpt_bgndt 형식은 'YYYY-MM-DD HH:MM:SS.S' 또는 'YYYY-MM-DD' 일 수 있으므로 문자열 비교를 사용합니다.
-            
-            # 접수 시작일이 있는 데이터만 필터링하고 정렬합니다.
+            # 접수 시작일이 있는 데이터만 필터링합니다.
             valid_reservations = [r for r in reservations if r.get('rcpt_bgndt')]
-            
-            # 정렬 키 함수: 접수 시작일
-            # 내림차순으로 정렬하면 (미래 -> 과거) 순서가 됩니다.
-            # 이렇게 순차적으로 전송하면:
-            # 1. 가장 먼 미래의 공고 전송
-            # ...
-            # 2. 오늘/내일의 공고 전송 (가장 중요)
-            # ...
-            # 3. 이미 지난 공고 전송
             
             # 사용자의 요구사항:
             # "오늘을 기준으로 접수 시작일이 가까운 순서대로 notify해줘."
@@ -83,8 +64,8 @@ def job():
             # 2. 우선순위가 높은 것 (오늘, 내일 등 접수 임박한 것)
             
             # 이를 위해 데이터를 두 그룹으로 나눕니다.
-            future_reservations = [] # 오늘 포함 이후 접수 시작
-            past_reservations = []   # 오늘 이전 접수 시작
+            future_reservations = []  # 오늘 포함 이후 접수 시작
+            past_reservations = []    # 오늘 이전 접수 시작
             
             for r in valid_reservations:
                 # 날짜 비교를 위해 문자열 앞 10자리(YYYY-MM-DD)만 사용
@@ -95,41 +76,22 @@ def job():
                     past_reservations.append(r)
             
             # 정렬 로직:
-            # past_reservations: 이미 지난 것들. 어떤 순서로 보낼지 명시되지 않았으나, 
-            # 보통 과거 데이터 중에서도 최근 것이 더 중요할 수 있으므로 
-            # 먼 과거 -> 최근 과거 순으로 보내면, 최근 과거가 더 아래에 쌓임.
-            # 하지만 "우선순위가 높은 건을 마지막으로"라는 원칙에 따라
-            # future_reservations가 past_reservations보다 나중에 전송되어야 함.
-            
-            # future_reservations 내부 정렬:
-            # 접수일이 가까운 것(오늘/내일)이 가장 중요하므로 가장 마지막에 전송되어야 함.
-            # 따라서 먼 미래 -> 가까운 미래 순으로 전송해야 함. (내림차순 정렬)
-            future_reservations.sort(key=lambda x: x.get('rcpt_bgndt', ''), reverse=True)
-            
-            # past_reservations 내부 정렬:
-            # 이미 지난 것들은 상대적으로 중요도가 낮음.
-            # 여기서는 접수일이 오래된 순 -> 최근 순으로 전송한다고 가정 (오름차순)
-            # 혹은 future와 맞추기 위해 내림차순(최근 과거 -> 먼 과거)으로 할 수도 있음.
-            # 사용자 예시: "공고일이 이미 가장 많이 지난 공고2를 처음으로 notify한다."
-            # 공고2(3/1) -> ... -> 공고1(3/5, 오늘)
-            # 즉, 날짜 오름차순(과거 -> 미래)으로 전송하면 됨.
-            
-            # 다시 정리:
-            # 사용자 예시: 3/1(과거) -> 3/2(과거) -> 3/3(과거) -> 3/4(과거) -> 3/7(미래) -> 3/5(오늘)
-            # 전송 순서:
-            # 1. 과거 데이터 (오래된 순 -> 최근 순) : 3/1, 3/2, 3/3, 3/4
-            # 2. 미래 데이터 (먼 미래 -> 가까운 미래) : 3/7
-            # 3. 오늘 데이터 (가장 중요) : 3/5
-            
-            # 따라서:
-            # past_reservations: 오름차순 정렬 (3/1, 3/2, 3/3, 3/4)
+            # past_reservations: 오름차순 정렬 (오래된 과거 -> 최근 과거)
             past_reservations.sort(key=lambda x: x.get('rcpt_bgndt', ''))
             
-            # future_reservations: 내림차순 정렬 (3/7, 3/5) -> 3/7 먼저 전송, 3/5 나중에 전송
+            # future_reservations: 내림차순 정렬 (먼 미래 -> 가까운 미래)
+            # 접수일이 가까운 것(오늘/내일)이 가장 중요하므로 가장 마지막에 전송되어야 함
             future_reservations.sort(key=lambda x: x.get('rcpt_bgndt', ''), reverse=True)
             
-            # 최종 처리 순서 리스트
+            # 최종 처리 순서 리스트: [과거 데이터] + [미래 데이터]
             sorted_reservations = past_reservations + future_reservations
+            
+            # notify_limit 개수만큼만 추출합니다.
+            # sorted_reservations는 [과거 -> 미래] 순서이므로, 
+            # 가장 중요한(마지막에 전송될) 미래 데이터가 리스트의 뒤쪽에 있습니다.
+            # 따라서 뒤에서부터 notify_limit 개수를 가져와야 가장 우선순위 높은 것들이 포함됩니다.
+            if len(sorted_reservations) > notify_limit:
+                sorted_reservations = sorted_reservations[-notify_limit:]
             
             # 수집된 각 예약 정보에 대해 반복합니다.
             for reservation in sorted_reservations:
@@ -173,7 +135,7 @@ def job():
         logger.error(f"Job failed: {e}")
 
 
-def main():
+def main(fetch_limit: int = 500, notify_limit: int = 30):
     """
     봇의 메인 실행 함수입니다. 봇 시작을 알리고, 스케줄러를 설정하여 `job` 함수를 주기적으로 실행합니다.
     무한 루프를 통해 스케줄러가 항상 대기 상태로 있도록 합니다.
@@ -181,11 +143,11 @@ def main():
     logger.info("Seoul Reservation Bot started.")  # 봇 시작을 알리는 초기 로그 메시지
 
     # 봇이 시작될 때 첫 번째 작업을 즉시 실행합니다. 이는 초기 데이터 동기화에 유용합니다.
-    job()
-
+    job(fetch_limit=fetch_limit, notify_limit=notify_limit)
+    
     # `schedule` 라이브러리를 사용하여 `job` 함수를 10분마다 실행하도록 설정합니다.
     # 이 설정은 `schedule.run_pending()`이 호출될 때마다 확인됩니다.
-    schedule.every(10).minutes.do(job)
+    schedule.every(10).minutes.do(job, fetch_limit=fetch_limit, notify_limit=notify_limit)
 
     # 무한 루프를 실행하여 스케줄러가 등록된 작업을 지속적으로 확인하고 실행하도록 합니다.
     while True:
@@ -194,6 +156,23 @@ def main():
 
 
 if __name__ == "__main__":
-    # 이 스크립트가 직접 실행될 때만 `main()` 함수를 호출합니다.
-    # 다른 모듈에서 임포트될 때는 `main()`이 자동으로 실행되지 않습니다.
-    main()
+    # `argparse` 모듈을 사용하여 명령줄 인자를 파싱합니다.
+    import argparse
+
+    parser = argparse.ArgumentParser(description="서울시 공공서비스 예약 알림 봇")
+    parser.add_argument(
+        "--fetch_limit",
+        type=int,
+        default=500,
+        help="API에서 가져올 최대 공고 수 (기본값: 500)",
+    )
+    parser.add_argument(
+        "--notify_limit",
+        type=int,
+        default=30,
+        help="텔레그램으로 알림을 보낼 최대 공고 수 (기본값: 30)",
+    )
+    args = parser.parse_args()
+
+    # main 함수를 호출할 때 파싱된 인자 값을 전달합니다.
+    main(fetch_limit=args.fetch_limit, notify_limit=args.notify_limit)
