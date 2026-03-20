@@ -2,3 +2,5 @@ requests
 python-telegram-bot
 schedule
 python-dotenv
+flask
+flask-cors
