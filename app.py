@@ -85,6 +85,7 @@ class ReservationBot:
         
         # 접수 시작일이 있는 데이터만 필터링
         valid_reservations = [r for r in reservations if r.get('rcpt_bgndt')]
+        logger.info(f"유효한 예약: {len(valid_reservations)}개")
         
         # 데이터를 과거/미래로 분류
         future_reservations = []  # 오늘 포함 이후 접수 시작
@@ -97,6 +98,8 @@ class ReservationBot:
             else:
                 past_reservations.append(r)
         
+        logger.info(f"과거 예약: {len(past_reservations)}개, 미래 예약: {len(future_reservations)}개")
+        
         # 정렬: 과거는 오름차순, 미래는 내림차순
         past_reservations.sort(key=lambda x: x.get('rcpt_bgndt', ''))
         future_reservations.sort(key=lambda x: x.get('rcpt_bgndt', ''), reverse=True)
@@ -108,21 +111,33 @@ class ReservationBot:
         if len(sorted_reservations) > notify_limit:
             sorted_reservations = sorted_reservations[-notify_limit:]
         
+        logger.info(f"처리할 예약: {len(sorted_reservations)}개")
+        
         # 각 예약 정보에 대해 알림 전송
-        for reservation in sorted_reservations:
+        for idx, reservation in enumerate(sorted_reservations, 1):
             svc_id = reservation["svc_id"]
+            svc_name = reservation.get("svc_name", "알 수 없음")
+            
+            logger.debug(f"[{idx}/{len(sorted_reservations)}] 처리 중: {svc_name} (ID: {svc_id})")
             
             if not self.storage.is_seen(svc_id):
-                logger.info(f"New reservation found: {reservation['svc_name']}")
+                logger.info(f"새 예약 발견: {svc_name}")
                 
-                message = self.notifier.format_message(reservation)
-                
-                if await self.notifier.send_message(message):
-                    self.storage.add_seen(svc_id)
-                    new_count += 1
-                    await asyncio.sleep(1)  # Rate limiting
-                else:
-                    logger.error(f"Failed to send notification for {svc_id}")
+                try:
+                    message = self.notifier.format_message(reservation)
+                    logger.debug(f"메시지 포맷팅 완료")
+                    
+                    if await self.notifier.send_message(message):
+                        self.storage.add_seen(svc_id)
+                        new_count += 1
+                        logger.info(f"✓ [{new_count}] {svc_name} 알림 전송 성공")
+                        await asyncio.sleep(1)  # Rate limiting
+                    else:
+                        logger.error(f"✗ {svc_name} 알림 전송 실패")
+                except Exception as e:
+                    logger.error(f"메시지 처리 중 오류 - {svc_name}: {type(e).__name__} - {str(e)}")
+            else:
+                logger.debug(f"이미 본 예약: {svc_name}")
         
         return new_count
 

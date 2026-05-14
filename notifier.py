@@ -1,9 +1,16 @@
 import os
 import asyncio
+import logging
 from telegram import Bot
 from telegram.error import TelegramError
 from dotenv import load_dotenv
 import html
+
+# 로깅 설정
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.DEBUG
+)
+logger = logging.getLogger(__name__)
 
 # .env 파일에서 환경 변수를 로드합니다.
 # 이를 통해 텔레그램 봇 토큰이나 채팅 ID와 같은 민감한 정보들을 안전하게 관리할 수 있습니다.
@@ -16,15 +23,24 @@ class Notifier:
         self.token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
+        logger.info(f"🔍 Notifier 초기화 시작")
+        logger.debug(f"Token exists: {bool(self.token)}")
+        logger.debug(f"Chat ID: {self.chat_id}")
+
         # 토큰이 설정되지 않았다면 명확한 에러를 발생시켜 초기 설정을 유도합니다.
         if not self.token:
-            raise ValueError("TELEGRAM_BOT_TOKEN is not set in .env file")
+            error_msg = "TELEGRAM_BOT_TOKEN is not set in .env file"
+            logger.error(f"❌ {error_msg}")
+            raise ValueError(error_msg)
         # 채팅 ID가 설정되지 않았다면 명확한 에러를 발생시켜 초기 설정을 유도합니다.
         if not self.chat_id:
-            raise ValueError("TELEGRAM_CHAT_ID is not set in .env file")
+            error_msg = "TELEGRAM_CHAT_ID is not set in .env file"
+            logger.error(f"❌ {error_msg}")
+            raise ValueError(error_msg)
 
         # 텔레그램 봇 객체를 생성합니다. 이 객체를 통해 텔레그램 API와 상호작용합니다.
         self.bot = Bot(token=self.token)
+        logger.info(f"✓ Telegram Bot 객체 생성 완료")
 
     async def send_message(self, message):
         """
@@ -32,16 +48,25 @@ class Notifier:
         메시지 전송 실패 시 `TelegramError`를 처리하여 프로그램의 안정성을 높입니다.
         """
         try:
+            logger.debug(f"📤 메시지 전송 시도 - Chat ID: {self.chat_id}")
+            logger.debug(f"Message content: {message[:100]}...")  # 처음 100자만 로그
+            
             # `bot.send_message` 메서드를 사용하여 실제 메시지를 보냅니다.
             # `chat_id`는 메시지를 받을 대상(개인 또는 그룹 채팅방)을 식별합니다.
-            await self.bot.send_message(
+            result = await self.bot.send_message(
                 chat_id=self.chat_id, text=message, parse_mode="HTML"
             )
+            
+            logger.info(f"✓ 메시지 전송 성공 - Message ID: {result.message_id}")
             return True  # 메시지 전송 성공 시 True 반환
+            
         except TelegramError as e:
             # 텔레그램 API 관련 오류(예: 잘못된 토큰, 존재하지 않는 채팅방 ID) 발생 시
             # 오류 메시지를 출력하고 False를 반환하여 호출자에게 실패를 알립니다.
-            print(f"Failed to send message: {e}")
+            logger.error(f"❌ 텔레그램 전송 실패: {type(e).__name__} - {str(e)}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ 예기치 않은 오류: {type(e).__name__} - {str(e)}")
             return False
 
     def format_message(self, reservation):
